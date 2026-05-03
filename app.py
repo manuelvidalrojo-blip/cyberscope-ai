@@ -1,5 +1,6 @@
 import streamlit as st
 from scanner import scan_domain
+from headers import analyze_security_headers
 # ── Page config ────────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="CyberScope AI",
@@ -151,6 +152,11 @@ if analyze:
 
         st.subheader("Resultado del análisis básico")
         st.json(result)
+       
+        headers_result = analyze_security_headers(clean_domain)
+
+        st.subheader("Análisis de cabeceras de seguridad")
+        st.json(headers_result)
 
 # ── Footer ─────────────────────────────────────────────────────────────────────
 st.markdown("---")
