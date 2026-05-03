@@ -147,11 +147,10 @@ if analyze:
         </div>
         """, unsafe_allow_html=True)
 
-        # Placeholder — los módulos se conectarán aquí en fases posteriores
-        # scanner.run(clean_domain)
-        # headers.analyze(clean_domain)
-        # scoring.calculate(results)
-        # ai_report.generate(results)
+        result = scan_domain(clean_domain)
+
+        st.subheader("Resultado del análisis básico")
+        st.json(result)
 
 # ── Footer ─────────────────────────────────────────────────────────────────────
 st.markdown("---")
