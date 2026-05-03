@@ -1,6 +1,7 @@
 import streamlit as st
 from scanner import scan_domain
 from headers import analyze_security_headers
+from scoring import calculate_global_score
 # ── Page config ────────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="CyberScope AI",
@@ -157,6 +158,17 @@ if analyze:
 
         st.subheader("Análisis de cabeceras de seguridad")
         st.json(headers_result)
+
+        score_result = calculate_global_score(result, headers_result)
+
+        st.subheader("Score global de seguridad")
+        st.metric(
+            label="Puntuación global",
+            value=f"{score_result['global_score']}/100"
+)
+
+        st.write(f"**Nivel de riesgo:** {score_result['risk_level']}")
+        st.info(score_result["summary"])
 
 # ── Footer ─────────────────────────────────────────────────────────────────────
 st.markdown("---")
