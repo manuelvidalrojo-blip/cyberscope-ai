@@ -3,7 +3,7 @@ report.py
 ---------
 Módulo de generación de informes HTML.
  
-Toma los resultados de los tres módulos de análisis y devuelve
+Toma los resultados de los cuatro módulos de análisis y devuelve
 un string con un informe HTML completo listo para guardar o descargar.
 """
  
@@ -35,6 +35,7 @@ def generate_html_report(
     scan_result:    dict,
     headers_result: dict,
     score_result:   dict,
+    dns_result:     dict,
 ) -> str:
     """
     Genera un informe de auditoría completo en formato HTML.
@@ -48,6 +49,7 @@ def generate_html_report(
         scan_result:    Salida de scanner.scan_domain().
         headers_result: Salida de headers.analyze_security_headers().
         score_result:   Salida de scoring.calculate_global_score().
+        dns_result:     Salida de dns_analyzer.analyze_dns().
  
     Returns:
         String con el documento HTML completo.
@@ -77,6 +79,7 @@ def generate_html_report(
     {_score_card(score, risk, risk_color, risk_bg, summary)}
     {_connectivity_section(scan_result)}
     {_headers_table(headers_result)}
+    {_dns_section(dns_result)}
     {_recommendations_section(headers_result)}
     {_footer(timestamp)}
  
@@ -344,6 +347,180 @@ def _headers_table(headers_result: dict) -> str:
     """
  
  
+def _dns_section(dns_result: dict) -> str:
+    """Sección de análisis DNS: registros, SPF y DMARC."""
+ 
+    error = dns_result.get("error")
+ 
+    # Si hubo error mostramos un aviso en lugar del contenido
+    if error:
+        return f"""
+        <section style="padding: 0.5rem 3rem 1rem;">
+            {_section_title("DNS y correo")}
+            <div style="
+                background: {COLOR['red_bg']};
+                border: 1px solid {COLOR['red']};
+                border-radius: 4px;
+                padding: 1rem 1.2rem;
+                color: {COLOR['red']};
+                font-size: 0.85rem;
+            ">⚠ {error}</div>
+        </section>
+        """
+ 
+    spf_found    = dns_result.get("spf_found",    False)
+    dmarc_found  = dns_result.get("dmarc_found",  False)
+    dmarc_record = dns_result.get("dmarc_record", None)
+ 
+    # ── Tabla de estado SPF / DMARC ───────────────────────────────────────────
+    spf_pill   = _pill("Sí", COLOR['green'], COLOR['green_bg']) if spf_found   else _pill("No", COLOR['red'], COLOR['red_bg'])
+    dmarc_pill = _pill("Sí", COLOR['green'], COLOR['green_bg']) if dmarc_found else _pill("No", COLOR['red'], COLOR['red_bg'])
+ 
+    estado_tabla = f"""
+    <table style="
+        width: 100%;
+        border-collapse: collapse;
+        background: {COLOR['card']};
+        border: 1px solid {COLOR['border']};
+        border-radius: 6px;
+        overflow: hidden;
+        margin-bottom: 1rem;
+    ">
+        <tr>
+            <td style="padding:0.7rem 1rem; color:{COLOR['muted']}; font-family:monospace;
+                       font-size:0.82rem; border-bottom:1px solid {COLOR['border']};">SPF detectado</td>
+            <td style="padding:0.7rem 1rem; border-bottom:1px solid {COLOR['border']};">{spf_pill}</td>
+        </tr>
+        <tr>
+            <td style="padding:0.7rem 1rem; color:{COLOR['muted']}; font-family:monospace;
+                       font-size:0.82rem;">DMARC detectado</td>
+            <td style="padding:0.7rem 1rem;">{dmarc_pill}</td>
+        </tr>
+    </table>
+    """
+ 
+    # ── Grupos de registros DNS ────────────────────────────────────────────────
+    grupos = [
+        ("Registros A",    "a_records"),
+        ("Registros AAAA", "aaaa_records"),
+        ("Registros MX",   "mx_records"),
+        ("Registros NS",   "ns_records"),
+    ]
+ 
+    registros_html = ""
+    for titulo, clave in grupos:
+        valores = dns_result.get(clave, [])
+        registros_html += _dns_record_block(titulo, valores)
+ 
+    # ── Registro DMARC completo (si existe) ───────────────────────────────────
+    dmarc_block = ""
+    if dmarc_record:
+        dmarc_block = f"""
+        <div style="margin-bottom: 0.8rem;">
+            <div style="
+                color: {COLOR['muted']};
+                font-size: 0.7rem;
+                letter-spacing: 1px;
+                margin-bottom: 0.3rem;
+                font-family: monospace;
+            ">REGISTRO DMARC</div>
+            <div style="
+                background: {COLOR['card']};
+                border: 1px solid {COLOR['border']};
+                border-left: 3px solid {COLOR['green']};
+                border-radius: 0 4px 4px 0;
+                padding: 0.6rem 1rem;
+                font-family: monospace;
+                font-size: 0.78rem;
+                color: {COLOR['green']};
+                word-break: break-all;
+            ">{dmarc_record}</div>
+        </div>
+        """
+ 
+    # ── Avisos si faltan SPF o DMARC ──────────────────────────────────────────
+    avisos_html = ""
+    if not spf_found:
+        avisos_html += f"""
+        <div style="
+            margin-bottom: 0.6rem;
+            padding: 0.8rem 1rem;
+            background: {COLOR['yellow_bg']};
+            border-left: 3px solid {COLOR['yellow']};
+            border-radius: 0 4px 4px 0;
+            color: {COLOR['text']};
+            font-size: 0.84rem;
+            line-height: 1.6;
+        ">⚠ No se detectó registro SPF. Sin SPF, otros servidores pueden enviar correo
+        suplantando tu dominio. Añade un registro TXT con tu política SPF.</div>
+        """
+    if not dmarc_found:
+        avisos_html += f"""
+        <div style="
+            margin-bottom: 0.6rem;
+            padding: 0.8rem 1rem;
+            background: {COLOR['yellow_bg']};
+            border-left: 3px solid {COLOR['yellow']};
+            border-radius: 0 4px 4px 0;
+            color: {COLOR['text']};
+            font-size: 0.84rem;
+            line-height: 1.6;
+        ">⚠ No se detectó registro DMARC. Sin DMARC no puedes controlar qué ocurre
+        con los correos que no superan la validación SPF o DKIM.</div>
+        """
+ 
+    return f"""
+    <section style="padding: 0.5rem 3rem 1rem;">
+        {_section_title("DNS y correo")}
+        {estado_tabla}
+        {registros_html}
+        {dmarc_block}
+        {avisos_html}
+    </section>
+    """
+ 
+ 
+def _dns_record_block(titulo: str, valores: list) -> str:
+    """
+    Renderiza un bloque compacto con el título del tipo de registro
+    y sus valores en píldoras, o un guión si no hay ninguno.
+ 
+    Args:
+        titulo:  Nombre del tipo de registro (ej. 'Registros A').
+        valores: Lista de strings con los valores del registro.
+ 
+    Returns:
+        HTML del bloque.
+    """
+    if valores:
+        # Cada valor va en su propia píldora
+        pills_html = " ".join([
+            f'<span style="'
+            f'display:inline-block; margin:2px 4px 2px 0;'
+            f'background:{COLOR["card"]}; color:{COLOR["text"]}; '
+            f'border:1px solid {COLOR["border"]}; '
+            f'font-family:monospace; font-size:0.75rem; '
+            f'padding:2px 10px; border-radius:4px; word-break:break-all;'
+            f'">{v}</span>'
+            for v in valores
+        ])
+    else:
+        pills_html = f'<span style="color:{COLOR["muted"]}; font-size:0.8rem;">—</span>'
+ 
+    return f"""
+    <div style="margin-bottom: 0.8rem;">
+        <div style="
+            color: {COLOR['muted']};
+            font-size: 0.7rem;
+            letter-spacing: 1px;
+            margin-bottom: 0.4rem;
+            font-family: monospace;
+        ">{titulo.upper()}</div>
+        <div>{pills_html}</div>
+    </div>
+    """
+ 
+ 
 def _recommendations_section(headers_result: dict) -> str:
     """Lista de recomendaciones de seguridad."""
  
@@ -474,4 +651,3 @@ def _risk_colors(risk: str) -> tuple[str, str]:
         "Alto":  (COLOR["red"],    COLOR["red_bg"]),
     }
     return table.get(risk, (COLOR["text"], COLOR["card"]))
- 

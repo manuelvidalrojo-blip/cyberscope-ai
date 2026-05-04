@@ -1,10 +1,10 @@
 import streamlit as st
 
-from scanner import scan_domain
-from headers import analyze_security_headers
-from scoring import calculate_global_score
-from ai_report import generate_html_report
-from dns_analyzer import analyze_dns
+from modules.scanner import scan_domain
+from modules.headers import analyze_security_headers
+from modules.scoring import calculate_global_score
+from modules.ai_report import generate_html_report
+from modules.dns_analyzer import analyze_dns
 
 
 # ── Page config ────────────────────────────────────────────────────────────────
@@ -334,7 +334,8 @@ if analyze:
             clean_domain,
             scan_result,
             headers_result,
-            score_result
+            score_result,
+            dns_result
         )
 
         st.download_button(
