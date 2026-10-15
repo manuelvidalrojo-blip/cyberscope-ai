@@ -90,6 +90,16 @@ def test_pr09_redirect_loop_is_limited(monkeypatch, public_dns):
         safe_get("https://ejemplo.com")
 
 
+def test_pr38_malformed_redirect_is_handled(monkeypatch, public_dns):
+    """PR-38 · RNF-02: una cabecera Location malformada no tumba el análisis (antes: ValueError)."""
+    monkeypatch.setattr(http_client.requests, "get",
+                        lambda url, **kw: FakeResponse(302, {"Location": "http://[invalido/"}))
+    with pytest.raises(FetchError, match="URL no válida"):
+        safe_get("https://ejemplo.com")
+    result = scan_domain("ejemplo.com")
+    assert result["http_status"] is None and "URL no válida" in result["error"]
+
+
 # ── RF-03 · Cabeceras ──────────────────────────────────────────────────────────
 
 def test_pr10_headers_all_present():

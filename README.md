@@ -9,7 +9,22 @@ Para cada dominio calcula una **puntuación de 0 a 100** y genera **recomendacio
 | Versión | Entrega |
 |---|---|
 | v1.0 (mayo 2026) | Práctica 1: prototipo con HTTPS, cabeceras, DNS, puntuación e informe HTML |
-| **v2.0 (octubre 2026)** | **Práctica 3: producto funcional (este README). Etiqueta `v1.0-practica3`** |
+| **v2.0 (octubre 2026)** | **Práctica 3: producto funcional (este README). Etiqueta `v1.0-practica3`. Cambios en [`CHANGELOG.md`](CHANGELOG.md)** |
+
+---
+
+## ✅ Estado de validación (15/10/2026)
+
+| Elemento | Estado |
+|---|---|
+| Instalación y ejecución con Python (opción A) | **Validado**: instalación limpia con Python 3.14.3 en Windows 11 |
+| Pruebas automáticas | **70 superadas**, 0 fallidas |
+| Resumen ejecutivo por reglas (sin clave) | **Validado** |
+| Resumen ejecutivo con la API de Claude | **NO VALIDADO**: no se dispuso de clave de API |
+| Docker / Caddy (opción B) | **NO VALIDADO** en el entorno de desarrollo |
+| HTTPS en el servidor de Hetzner | **Pendiente**: el servidor no tiene dominio; sigue la versión de la Práctica 1 por HTTP |
+
+Detalle en [`docs/limitaciones.md`](docs/limitaciones.md). Qué datos se guardan y durante cuánto tiempo: [`docs/modelo_de_amenazas.md`](docs/modelo_de_amenazas.md) §7.
 
 ---
 
@@ -23,8 +38,8 @@ Para cada dominio calcula una **puntuación de 0 a 100** y genera **recomendacio
 | DNS y correo | Registros A/AAAA/MX/NS/TXT, SPF (con su calificador `-all`/`~all`/`+all`) y DMARC (con su política `p=`) |
 | Exposición | Puertos y CVE conocidos según **Shodan InternetDB**, sin escanear |
 | Subdominios | Subdominios públicos según **Certificate Transparency (crt.sh)** |
-| Puntuación | 0-100 en cuatro áreas ponderadas, más una penalización por servicios peligrosos expuestos |
-| Resumen ejecutivo | Con la API de Claude si hay clave; si no, por reglas, indicado de forma explícita |
+| Puntuación | 0-100 en cuatro áreas ponderadas, más una penalización por servicios peligrosos expuestos (modelo v2: modifica el 50/50 de la Práctica 1, ver [`docs/alcance.md`](docs/alcance.md)) |
+| Resumen ejecutivo | Con la API de Claude si hay clave (no validado); si no, por reglas, indicado de forma explícita |
 | Informes | HTML autocontenido (imprimible a PDF), Markdown y JSON |
 | Historial | Cada análisis queda guardado en SQLite, con gráfica de evolución por dominio |
 | Usuarios | Login con roles `admin` / `analyst`, bloqueo tras 5 intentos fallidos y límite de análisis por usuario |
@@ -34,40 +49,49 @@ Para cada dominio calcula una **puntuación de 0 a 100** y genera **recomendacio
 
 ## 📋 Requisitos previos
 
-- **Opción A (recomendada):** Docker 24+ con Docker Compose v2.
-- **Opción B (local):** Python **3.11 o superior** y `git`.
+- **Python 3.11 o superior** y `git`. **Validado con Python 3.14.3 en Windows 11**; otras versiones no se han probado.
 - Conexión a Internet: los análisis consultan el dominio, crt.sh y Shodan InternetDB.
-- *(Opcional)* Una clave de la API de Anthropic para el resumen con IA.
+- *(Opcional)* Una clave de la API de Anthropic para el resumen con IA. Sin clave, el resumen se genera por reglas.
+- *(Opcional, ruta no validada)* Docker 24+ con Docker Compose v2.
 
 ---
 
 ## 🚀 Instalación y ejecución
 
-### Opción A · Docker (recomendada)
+### Opción A · Python (ruta validada)
+
+Son los pasos de la instalación limpia validada el 15/10/2026. Las únicas diferencias con lo ejecutado están anotadas en [`docs/plan_de_pruebas.md`](docs/plan_de_pruebas.md), prueba M-11:
 
 ```bash
 git clone https://github.com/manuelvidalrojo-blip/cyberscope-ai.git
 cd cyberscope-ai
+python -m venv .venv          # Windows sin 'python' en el PATH: py -3.14 -m venv .venv
+# Activar el entorno:
+#   Windows (cmd/PowerShell):  .venv\Scripts\activate
+#   Windows (Git Bash):        source .venv/Scripts/activate
+#   Linux/macOS:               source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env          # en cmd/PowerShell: copy .env.example .env
+streamlit run app.py
+```
+
+La aplicación queda en **http://localhost:8501**. Comprobación de salud: `http://localhost:8501/_stcore/health` responde `ok`.
+
+Notas:
+- `streamlit run app.py` escucha en todas las interfaces, así que es accesible desde tu red local. Para limitarlo a tu equipo: `streamlit run app.py --server.address 127.0.0.1`.
+- Recomendado (no forma parte de la ruta validada): `python -m pip install --upgrade pip`. El `pip` 25.3 que trae Python 3.14.3 tiene vulnerabilidades conocidas según `pip-audit`; no afecta a la app.
+
+### Opción B · Docker (⚠️ NO VALIDADA)
+
+> Los ficheros `Dockerfile`, `docker-compose.yml` y `deploy/Caddyfile` se incluyen, pero **no se han podido ejecutar** en el entorno de desarrollo (Docker no instalado). Solo se han revisado de forma estática: ver [`docs/limitaciones.md`](docs/limitaciones.md).
+
+```bash
+# desde la carpeta clonada en la opción A
 cp .env.example .env          # edita al menos CYBERSCOPE_ADMIN_PASSWORD
 docker compose up -d --build
 ```
 
-Abre **http://localhost** (Caddy publica el puerto 80). Para un servidor con dominio, pon `SITE_ADDRESS=tudominio.com` en `.env`: Caddy obtiene el certificado de Let's Encrypt y sirve la app por HTTPS.
-
-### Opción B · Python local
-
-```bash
-git clone https://github.com/manuelvidalrojo-blip/cyberscope-ai.git
-cd cyberscope-ai
-python -m venv .venv
-# Windows:      .venv\Scripts\activate
-# Linux/macOS:  source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env          # en Windows: copy .env.example .env
-streamlit run app.py
-```
-
-La aplicación se abre en **http://localhost:8501**.
+En principio, Caddy publica la app en **http://localhost**. Con `SITE_ADDRESS=tudominio.com` en `.env`, Caddy solicitaría un certificado de Let's Encrypt.
 
 ### Datos de acceso de prueba
 
@@ -90,7 +114,7 @@ Al arrancar por primera vez, si la base de datos está vacía, se crea el admini
 5. Descarga el informe en HTML, Markdown o JSON. Para obtener un PDF, abre el HTML y elige *Imprimir → Guardar como PDF*.
 6. En **Historial** puedes ver la evolución de la puntuación de cada dominio y reabrir análisis anteriores.
 
-### Demo con objetivo de laboratorio
+### Demo con objetivo de laboratorio (requiere Docker, ⚠️ no validado)
 
 Para hacer demos sin tocar sistemas ajenos, levanta un nginx deliberadamente mal configurado:
 
@@ -112,7 +136,7 @@ Después analiza el host `lab-target`. Solo los hosts listados en `LAB_HOSTS` se
 | `CLAUDE_MODEL` | `claude-opus-5-5` | Modelo para el resumen |
 | `RATE_LIMIT_ANALYSES` / `RATE_LIMIT_WINDOW_MIN` | 10 / 10 | Máx. análisis por usuario y ventana (min) |
 | `SESSION_TIMEOUT_MIN` | 30 | Caducidad de sesión por inactividad |
-| `AUDIT_RETENTION_DAYS` | 90 | Días que se conserva la auditoría (contiene IPs) |
+| `AUDIT_RETENTION_DAYS` | 90 | Días que se conserva la auditoría (purga al arrancar la app; ver `docs/modelo_de_amenazas.md` §7) |
 | `DATA_DIR` | `data` | Carpeta de la base de datos SQLite |
 | `LAB_HOSTS` | vacío | Hosts de laboratorio permitidos con IP privada |
 | `SITE_ADDRESS` | `:80` | Dominio para Caddy (HTTPS automático) |
@@ -123,7 +147,7 @@ Después analiza el host `lab-target`. Solo los hosts listados en `LAB_HOSTS` se
 
 ```bash
 pip install -r requirements-dev.txt
-pytest -v                       # 69 pruebas automáticas, sin acceso a red
+pytest -v                       # 70 pruebas automáticas; usan respuestas simuladas, sin red
 pip-audit -r requirements.txt   # vulnerabilidades conocidas en dependencias
 ```
 
@@ -153,7 +177,7 @@ cyberscope-ai/
 │   └── storage.py            # SQLite: historial, auditoría, retención
 ├── scripts/manage_users.py   # Gestión de usuarios por terminal
 ├── tests/                    # Pruebas automáticas (pytest)
-├── docs/                     # Requisitos, trazabilidad, pruebas, modelo de amenazas
+├── docs/                     # Requisitos, alcance, trazabilidad, pruebas, amenazas, limitaciones
 ├── deploy/                   # Caddyfile y objetivo de laboratorio
 ├── Dockerfile · docker-compose.yml
 ├── .env.example              # Variables necesarias con valores ficticios
@@ -165,15 +189,15 @@ cyberscope-ai/
 
 ## 🔐 Seguridad
 
-Resumen de los controles. El detalle está en [`docs/modelo_de_amenazas.md`](docs/modelo_de_amenazas.md).
+Resumen de los controles. El detalle está en [`docs/modelo_de_amenazas.md`](docs/modelo_de_amenazas.md) y las limitaciones en [`docs/limitaciones.md`](docs/limitaciones.md).
 
 - **Anti-SSRF:** solo se analizan dominios que resuelven a IPs públicas, y cada redirección se vuelve a validar.
-- **Sin XSS:** todo dato que procede del dominio analizado se escapa. El informe HTML lleva una CSP que bloquea scripts.
+- **Sin XSS ni inyección Markdown:** todo dato que procede del dominio analizado se escapa o se muestra como texto literal. El informe HTML lleva una CSP que bloquea scripts.
 - **Contraseñas:** se guardan con PBKDF2-SHA256 (600 000 iteraciones). Hay bloqueo temporal por intentos fallidos y el mensaje de error no revela si el usuario existe.
 - **Control de acceso por rol:** un analista solo ve su propio historial.
 - **Uso:** límite de análisis por usuario, confirmación de autorización y auditoría con retención limitada.
 - **Secretos:** solo en `.env`, que está en `.gitignore`. Las dependencias tienen versión fija y se revisan con `pip-audit` y Dependabot.
-- **Contenedor:** se ejecuta sin root, con sistema de ficheros de solo lectura y sin *capabilities*. Caddy añade HSTS, CSP y el resto de cabeceras de seguridad.
+- **Contenedor (no validado):** configurado sin root, con sistema de ficheros de solo lectura y sin *capabilities*. Caddy añadiría HSTS, CSP y el resto de cabeceras.
 
 ---
 

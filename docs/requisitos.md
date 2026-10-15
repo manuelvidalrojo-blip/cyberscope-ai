@@ -40,7 +40,9 @@ Estado según el enunciado: **Cumplido**, **Parcial**, **Pendiente**, **A revisa
 
 ### RF-06 · Puntuación global (A revisar → modificado)
 
-- **Versión original:** 50 puntos HTTPS + 50 puntos cabeceras.
+Se clasifica como **requisito modificado** y no como simple decisión técnica, porque la memoria P1 fijó la fórmula 50/50 y el cambio altera el resultado visible. El análisis completo está en [`alcance.md`](alcance.md) §2.
+
+- **Versión original:** 50 puntos HTTPS (−30 sin HTTPS, −10 sin redirección, −40 si hay error) + 50 puntos cabeceras. Umbrales: 80-100 Bajo, 50-79 Medio, 0-49 Alto.
 - **Problema:** un dominio sin SPF ni DMARC, o con el certificado caducado, podía sacar 100/100. La puntuación contradecía las advertencias del propio dashboard.
 - **Versión nueva:** HTTPS 25 + cabeceras 30 + TLS 20 + correo 25, con una penalización de hasta −15 por servicios peligrosos expuestos. Los umbrales de riesgo no cambian (80/50).
 - **Consecuencia:** las puntuaciones de la Práctica 1 no son comparables con las nuevas. Por ejemplo, `evolucionar.es` sacaba 75 en P1. Se documenta en la memoria.
@@ -68,4 +70,4 @@ Estado según el enunciado: **Cumplido**, **Parcial**, **Pendiente**, **A revisa
 ### RNF-08 · HTTPS en el servidor (parcial)
 
 - **Implementado:** Caddy hace de proxy y obtiene el certificado de Let's Encrypt automáticamente cuando `SITE_ADDRESS` es un dominio. También añade las cabeceras de seguridad.
-- **Limitación:** el servidor actual de Hetzner solo tiene IP pública, sin dominio, así que allí se sirve por HTTP. Activarlo solo requiere apuntar un dominio a la IP.
+- **Limitación:** el servidor actual de Hetzner solo tiene IP pública, sin dominio, así que allí se sirve por HTTP. Con un dominio apuntando a la IP, el Caddyfile debería obtener el certificado, pero **no está validado** (Docker no probado).

@@ -99,6 +99,12 @@ def section(title: str) -> None:
     st.markdown(f'<p class="section-title">◈ {esc(title)}</p>', unsafe_allow_html=True)
 
 
+def plain_field(label: str, value) -> None:
+    """Muestra un valor externo como texto literal: st.write lo interpretaría como Markdown."""
+    st.markdown(f"**{label}:**")
+    st.text(value or "—")
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # AUTENTICACIÓN
 # ══════════════════════════════════════════════════════════════════════════════
@@ -358,7 +364,7 @@ def render_results(a: dict, user: dict) -> None:
         col1.metric("HTTP", str(scan.get("http_status") or "N/A"))
         col2.metric("HTTPS", str(scan.get("https_status") or "N/A"))
         col3.metric("Redirige a HTTPS", "✅ Sí" if scan.get("redirects_to_https") else "❌ No")
-        st.write("**Tecnologías detectadas:**", ", ".join(scan.get("technologies", [])) or "—")
+        plain_field("Tecnologías detectadas", ", ".join(scan.get("technologies", [])))
 
     headers = a["headers"]
     with tabs[1]:
@@ -378,9 +384,9 @@ def render_results(a: dict, user: dict) -> None:
             col1.metric("Días hasta caducar", tls.get("days_left"))
             col2.metric("Versión", tls.get("tls_version") or "—")
             col3.metric("Confiable", "✅ Sí" if tls.get("trusted") else "❌ No")
-            st.write("**Emisor:**", tls.get("issuer") or "—")
+            plain_field("Emisor", tls.get("issuer"))
             st.write("**Válido:**", f"{tls.get('not_before')} → {tls.get('not_after')}")
-            st.write("**Nombres (SAN):**", ", ".join(tls.get("san", [])[:20]) or "—")
+            plain_field("Nombres (SAN)", ", ".join(tls.get("san", [])[:20]))
 
     dns = a["dns"]
     with tabs[3]:
@@ -391,7 +397,7 @@ def render_results(a: dict, user: dict) -> None:
             col1.metric("SPF", f"✅ {dns.get('spf_all') or ''}" if dns.get("spf_found") else "❌ No encontrado")
             col2.metric("DMARC", f"✅ p={dns.get('dmarc_policy')}" if dns.get("dmarc_found") else "❌ No encontrado")
             for tipo, clave in [("A", "a_records"), ("AAAA", "aaaa_records"), ("MX", "mx_records"), ("NS", "ns_records")]:
-                st.write(f"**{tipo}:**", ", ".join(dns.get(clave, [])) or "—")
+                plain_field(tipo, ", ".join(dns.get(clave, [])))
             if dns.get("dmarc_record"):
                 st.code(dns["dmarc_record"], language=None)
 

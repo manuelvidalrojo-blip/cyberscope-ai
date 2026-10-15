@@ -1,0 +1,4 @@
+# Falso positivo justificado: contraseña de EJEMPLO documentada en .env.example y
+# en el README como credencial de prueba. No es un secreto real; debe cambiarse
+# en cualquier despliegue (ver docs/limitaciones.md, apartado 4).
+b8c08d03b9a659c2b40bb363447107b2c7dbaa90:.env.example:generic-api-key:9

@@ -50,11 +50,15 @@ def safe_get(url: str, timeout: int = TIMEOUT) -> FetchResult:
     current = url
 
     for _ in range(MAX_REDIRECTS + 1):
-        host = urlparse(current).hostname or ""
+        try:
+            host = urlparse(current).hostname or ""
+        except ValueError as exc:
+            # Location malformada enviada por el servidor (p. ej. "http://[invalido/")
+            raise FetchError("El servidor devolvió una redirección con una URL no válida.") from exc
         try:
             check_target(host)
         except TargetNotAllowed as exc:
-            raise FetchError(f"Redirección bloqueada hacia «{host}»: {exc}") from exc
+            raise FetchError(f"Redirección bloqueada hacia un destino no permitido. {exc}") from exc
 
         try:
             response = requests.get(
@@ -84,7 +88,10 @@ def safe_get(url: str, timeout: int = TIMEOUT) -> FetchResult:
         location = response.headers.get("Location")
         if response.is_redirect and location:
             chain.append(current)
-            current = urljoin(current, location)
+            try:
+                current = urljoin(current, location)
+            except ValueError as exc:
+                raise FetchError("El servidor devolvió una redirección con una URL no válida.") from exc
             continue
 
         return FetchResult(

@@ -1,0 +1,12 @@
+# 2026-10-15 12:20 · 8.30.1 · gitleaks detect --source . --log-opts=--all --redact
+# Sin .gitleaksignore: 1 hallazgo (CYBERSCOPE_ADMIN_PASSWORD de ejemplo en .env.example, regla generic-api-key). Con .gitleaksignore:
+
+○
+│╲
+│ ○
+○ ░
+░    gitleaks
+
+INF 20 commits scanned.
+INF scanned ~274333 bytes (274.33 KB) in 520ms
+INF no leaks found
