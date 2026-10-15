@@ -1,0 +1,18 @@
+# Proxy inverso delante de Streamlit.
+# SITE_ADDRESS=tudominio.com → HTTPS automático (Let's Encrypt)
+# SITE_ADDRESS=:80           → HTTP en una IP sin dominio (solo pruebas)
+{$SITE_ADDRESS::80} {
+	encode gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none'"
+		-Server
+	}
+
+	reverse_proxy app:8501
+}

@@ -1,0 +1,54 @@
+# CyberScope AI · despliegue con Docker Compose
+#
+#   cp .env.example .env      # y edita los valores
+#   docker compose up -d --build
+#
+# · app:   Streamlit, solo accesible desde la red interna de Docker.
+# · proxy: Caddy, único servicio publicado. Añade cabeceras de seguridad y,
+#          si SITE_ADDRESS es un dominio, HTTPS automático con Let's Encrypt.
+# · lab:   (opcional) objetivo de laboratorio para demos:
+#          docker compose --profile lab up -d   y   LAB_HOSTS=lab-target en .env
+
+services:
+  app:
+    build: .
+    env_file: .env
+    environment:
+      DATA_DIR: /app/data
+    volumes:
+      - cyberscope-data:/app/data
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /home/cyberscope
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  proxy:
+    image: caddy:2.10-alpine
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: unless-stopped
+
+  lab-target:
+    image: nginx:1.29-alpine
+    profiles: ["lab"]
+    volumes:
+      - ./deploy/lab-nginx.conf:/etc/nginx/conf.d/default.conf:ro
+
+volumes:
+  cyberscope-data:
+  caddy-data:
+  caddy-config:
