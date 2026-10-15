@@ -1,653 +1,283 @@
 """
 report.py
 ---------
-Módulo de generación de informes HTML.
+Generación de informes descargables: HTML autocontenido y Markdown.
 
-Toma los resultados de los cuatro módulos de análisis y devuelve
-un string con un informe HTML completo listo para guardar o descargar.
+Seguridad: TODO valor que procede del dominio analizado (cabeceras,
+registros DNS, certificado, subdominios...) se escapa con esc(). En la
+Práctica 1 se insertaba tal cual, lo que permitía que un dominio malicioso
+inyectara HTML/JavaScript en el informe. Además el informe incluye una
+Content-Security-Policy que bloquea scripts y recursos externos.
 """
 
-from datetime import datetime
+from __future__ import annotations
 
+from modules.utils import esc, truncate
 
-# ── Paleta de colores del tema oscuro ─────────────────────────────────────────
-COLOR = {
-    "bg":           "#0A0F1E",   # fondo principal
-    "card":         "#0D1B2A",   # fondo de tarjetas
-    "border":       "#1E3A5F",   # bordes sutiles
-    "text":         "#C8D6E5",   # texto normal
-    "muted":        "#8892A4",   # texto secundario
-    "green":        "#00FFB2",   # riesgo bajo / presente
-    "yellow":       "#FFC800",   # riesgo medio
-    "red":          "#FF4B4B",   # riesgo alto / ausente
-    "green_bg":     "rgba(0,255,178,0.08)",
-    "yellow_bg":    "rgba(255,200,0,0.08)",
-    "red_bg":       "rgba(255,75,75,0.08)",
-}
+RISK_COLORS = {"Bajo": "#0f9d58", "Medio": "#e6a700", "Alto": "#d93025"}
+SEVERITY_COLORS = {"Alta": "#d93025", "Media": "#e6a700", "Baja": "#5f6b7a"}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FUNCIÓN PRINCIPAL
+# HTML
 # ══════════════════════════════════════════════════════════════════════════════
 
-def generate_html_report(
-    domain:         str,
-    scan_result:    dict,
-    headers_result: dict,
-    score_result:   dict,
-    dns_result:     dict,
-) -> str:
-    """
-    Genera un informe de auditoría completo en formato HTML.
+def generate_html_report(analysis: dict, ai_summary: dict | None = None, author: str | None = None) -> str:
+    """Devuelve el informe completo como HTML autocontenido (sin JS ni recursos externos)."""
+    a = analysis
+    score = a["score"]
+    color = RISK_COLORS.get(score["risk_level"], "#333")
 
-    No escribe ningún archivo: devuelve el HTML como string para que
-    el código que llama a esta función decida qué hacer con él
-    (mostrar en pantalla, guardar en disco, ofrecer como descarga, etc.).
+    sections = [
+        _summary_section(a, score, color, ai_summary),
+        _breakdown_section(score),
+        _recommendations_section(score.get("recommendations", [])),
+        _connectivity_section(a["scan"]),
+        _headers_section(a["headers"]),
+        _tls_section(a["tls"]),
+        _dns_section(a["dns"]),
+        _exposure_section(a["exposure"]),
+        _subdomains_section(a["subdomains"]),
+    ]
 
-    Args:
-        domain:         Dominio analizado (ej. 'ejemplo.com').
-        scan_result:    Salida de scanner.scan_domain().
-        headers_result: Salida de headers.analyze_security_headers().
-        score_result:   Salida de scoring.calculate_global_score().
-        dns_result:     Salida de dns_analyzer.analyze_dns().
-
-    Returns:
-        String con el documento HTML completo.
-    """
-
-    # Extraemos los valores que vamos a usar varias veces
-    score     = score_result.get("global_score", 0)
-    risk      = score_result.get("risk_level", "Alto")
-    summary   = score_result.get("summary", "")
-    timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-
-    # Colores dinámicos según nivel de riesgo
-    risk_color, risk_bg = _risk_colors(risk)
-
-    # Construimos cada sección por separado para mantener el código legible
-    html = f"""<!DOCTYPE html>
+    return f"""<!DOCTYPE html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CyberScope AI Report — {domain}</title>
-    {_styles()}
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CyberScope AI · Informe de {esc(a['domain'])}</title>
+<style>{_STYLES}</style>
 </head>
 <body>
-
-    {_header(domain, timestamp)}
-    {_score_card(score, risk, risk_color, risk_bg, summary)}
-    {_connectivity_section(scan_result)}
-    {_headers_table(headers_result)}
-    {_dns_section(dns_result)}
-    {_recommendations_section(headers_result)}
-    {_footer(timestamp)}
-
+<header>
+  <div class="brand">🛡️ CyberScope AI</div>
+  <h1>Informe de exposición externa</h1>
+  <p class="meta">Dominio: <strong>{esc(a['domain'])}</strong> · IPs: {esc(', '.join(a.get('ips', [])))}<br>
+  Fecha (UTC): {esc(a['timestamp'])} · Duración: {esc(a.get('duration_s'))} s{(' · Analista: ' + esc(author)) if author else ''}</p>
+</header>
+{''.join(sections)}
+<footer>Análisis pasivo generado por CyberScope AI. Uso exclusivo sobre dominios propios o con autorización expresa.
+Para guardarlo en PDF usa «Imprimir → Guardar como PDF» en el navegador.</footer>
 </body>
 </html>"""
 
-    return html
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# SECCIONES DEL INFORME
-# ══════════════════════════════════════════════════════════════════════════════
-
-def _header(domain: str, timestamp: str) -> str:
-    """Cabecera del informe: logo, título y metadatos."""
+def _summary_section(a, score, color, ai_summary) -> str:
+    ai_html = ""
+    if ai_summary:
+        origen = (f"Generado con IA ({esc(ai_summary.get('model'))})" if ai_summary.get("source") == "claude"
+                  else "Generado por reglas (sin IA)")
+        ai_html = f"""<div class="ai"><div class="tag">{origen}</div>{_markdown_to_html(ai_summary.get('text', ''))}</div>"""
     return f"""
-    <header style="
-        background: {COLOR['card']};
-        border-bottom: 2px solid {COLOR['green']};
-        padding: 2rem 3rem;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    ">
-        <div>
-            <div style="
-                font-size: 0.65rem;
-                letter-spacing: 3px;
-                color: {COLOR['green']};
-                font-family: monospace;
-                margin-bottom: 0.4rem;
-            ">◈ INFORME DE SEGURIDAD</div>
-            <h1 style="
-                margin: 0;
-                font-size: 1.8rem;
-                color: {COLOR['green']};
-                font-family: monospace;
-                letter-spacing: -0.5px;
-            ">🛡️ CyberScope AI</h1>
-        </div>
-        <div style="text-align: right;">
-            <div style="color: {COLOR['muted']}; font-size: 0.75rem;">Dominio analizado</div>
-            <div style="
-                color: {COLOR['text']};
-                font-family: monospace;
-                font-size: 1rem;
-                font-weight: bold;
-                margin-top: 0.2rem;
-            ">{domain}</div>
-            <div style="color: {COLOR['muted']}; font-size: 0.7rem; margin-top: 0.4rem;">
-                {timestamp}
-            </div>
-        </div>
-    </header>
-    """
+<section>
+  <div class="score" style="border-color:{color}">
+    <div class="num" style="color:{color}">{esc(score['global_score'])}<small>/100</small></div>
+    <div class="risk" style="background:{color}">RIESGO {esc(str(score['risk_level']).upper())}</div>
+  </div>
+  <p>{esc(score.get('summary'))}</p>
+  {ai_html}
+</section>"""
 
 
-def _score_card(score: int, risk: str, risk_color: str, risk_bg: str, summary: str) -> str:
-    """Tarjeta principal con score global, nivel de riesgo y resumen."""
-    return f"""
-    <section style="padding: 2rem 3rem 1rem;">
-        <div style="
-            background: {COLOR['card']};
-            border: 1px solid {COLOR['border']};
-            border-left: 4px solid {risk_color};
-            border-radius: 6px;
-            padding: 2rem;
-            display: flex;
-            align-items: center;
-            gap: 2.5rem;
-        ">
-            <!-- Número grande del score -->
-            <div style="text-align: center; min-width: 120px;">
-                <div style="
-                    font-family: monospace;
-                    font-size: 4rem;
-                    font-weight: bold;
-                    color: {risk_color};
-                    line-height: 1;
-                ">{score}</div>
-                <div style="
-                    color: {COLOR['muted']};
-                    font-size: 0.65rem;
-                    letter-spacing: 2px;
-                    margin-top: 0.3rem;
-                ">/ 100</div>
-            </div>
-
-            <!-- Badge de riesgo y resumen -->
-            <div style="flex: 1;">
-                <span style="
-                    background: {risk_bg};
-                    color: {risk_color};
-                    border: 1px solid {risk_color};
-                    font-family: monospace;
-                    font-size: 0.75rem;
-                    font-weight: bold;
-                    letter-spacing: 2px;
-                    padding: 3px 14px;
-                    border-radius: 2px;
-                ">RIESGO {risk.upper()}</span>
-
-                <p style="
-                    color: {COLOR['text']};
-                    font-size: 0.9rem;
-                    line-height: 1.7;
-                    margin: 0.8rem 0 0;
-                ">{summary}</p>
-            </div>
-        </div>
-    </section>
-    """
-
-
-def _connectivity_section(scan_result: dict) -> str:
-    """Tabla de estado de conectividad HTTP / HTTPS."""
-
-    http_status  = scan_result.get("http_status")
-    https_status = scan_result.get("https_status")
-    uses_https   = scan_result.get("uses_https", False)
-    redirects    = scan_result.get("redirects_to_https", False)
-    error        = scan_result.get("error")
-
-    # Si hubo error mostramos un aviso en lugar de la tabla
-    if error:
-        return f"""
-        <section style="padding: 0.5rem 3rem 1rem;">
-            {_section_title("Conectividad")}
-            <div style="
-                background: {COLOR['red_bg']};
-                border: 1px solid {COLOR['red']};
-                border-radius: 4px;
-                padding: 1rem 1.2rem;
-                color: {COLOR['red']};
-                font-size: 0.85rem;
-            ">⚠ {error}</div>
-        </section>
-        """
-
-    def _status_pill(value):
-        """Devuelve un span con el código de estado coloreado."""
-        if value is None:
-            return _pill("N/A", COLOR['muted'], "transparent")
-        color = COLOR['green'] if value < 400 else COLOR['red']
-        return _pill(str(value), color, "transparent")
-
-    def _bool_pill(value):
-        text  = "Sí" if value else "No"
-        color = COLOR['green'] if value else COLOR['red']
-        return _pill(text, color, "transparent")
-
-    rows = [
-        ("HTTP Status",           _status_pill(http_status)),
-        ("HTTPS Status",          _status_pill(https_status)),
-        ("HTTPS activo",          _bool_pill(uses_https)),
-        ("Redirige HTTP → HTTPS", _bool_pill(redirects)),
-    ]
-
-    filas_html = "".join([
-        f"""
-        <tr>
-            <td style="
-                padding: 0.7rem 1rem;
-                color: {COLOR['muted']};
-                font-size: 0.82rem;
-                border-bottom: 1px solid {COLOR['border']};
-                font-family: monospace;
-            ">{nombre}</td>
-            <td style="
-                padding: 0.7rem 1rem;
-                border-bottom: 1px solid {COLOR['border']};
-            ">{valor_html}</td>
-        </tr>
-        """
-        for nombre, valor_html in rows
-    ])
-
-    return f"""
-    <section style="padding: 0.5rem 3rem 1rem;">
-        {_section_title("Conectividad HTTP / HTTPS")}
-        <table style="
-            width: 100%;
-            border-collapse: collapse;
-            background: {COLOR['card']};
-            border: 1px solid {COLOR['border']};
-            border-radius: 6px;
-            overflow: hidden;
-        ">
-            {filas_html}
-        </table>
-    </section>
-    """
-
-
-def _headers_table(headers_result: dict) -> str:
-    """Tabla de cabeceras de seguridad: nombre, estado y valor."""
-
-    headers_found = headers_result.get("headers_found", {})
-
-    filas_html = ""
-    for cabecera, valor in headers_found.items():
-        presente = valor is not None
-
-        estado_html = (
-            _pill("Presente", COLOR['green'], COLOR['green_bg'])
-            if presente else
-            _pill("Ausente",  COLOR['red'],   COLOR['red_bg'])
-        )
-
-        # Truncamos valores muy largos para que no rompan el layout
-        valor_texto = valor if valor and len(valor) <= 90 else (valor[:87] + "…" if valor else "—")
-
-        filas_html += f"""
-        <tr>
-            <td style="
-                padding: 0.7rem 1rem;
-                font-family: monospace;
-                font-size: 0.8rem;
-                color: {COLOR['text']};
-                border-bottom: 1px solid {COLOR['border']};
-                white-space: nowrap;
-            ">{cabecera}</td>
-            <td style="
-                padding: 0.7rem 1rem;
-                border-bottom: 1px solid {COLOR['border']};
-                text-align: center;
-            ">{estado_html}</td>
-            <td style="
-                padding: 0.7rem 1rem;
-                font-size: 0.75rem;
-                color: {COLOR['muted']};
-                border-bottom: 1px solid {COLOR['border']};
-                word-break: break-all;
-            ">{valor_texto}</td>
-        </tr>
-        """
-
-    return f"""
-    <section style="padding: 0.5rem 3rem 1rem;">
-        {_section_title("Cabeceras de seguridad")}
-        <table style="
-            width: 100%;
-            border-collapse: collapse;
-            background: {COLOR['card']};
-            border: 1px solid {COLOR['border']};
-            border-radius: 6px;
-            overflow: hidden;
-        ">
-            <!-- Encabezado de la tabla -->
-            <thead>
-                <tr style="border-bottom: 2px solid {COLOR['border']};">
-                    <th style="padding:0.6rem 1rem; text-align:left; color:{COLOR['muted']};
-                               font-size:0.65rem; letter-spacing:2px; font-weight:normal;">CABECERA</th>
-                    <th style="padding:0.6rem 1rem; text-align:center; color:{COLOR['muted']};
-                               font-size:0.65rem; letter-spacing:2px; font-weight:normal;">ESTADO</th>
-                    <th style="padding:0.6rem 1rem; text-align:left; color:{COLOR['muted']};
-                               font-size:0.65rem; letter-spacing:2px; font-weight:normal;">VALOR</th>
-                </tr>
-            </thead>
-            <tbody>
-                {filas_html}
-            </tbody>
-        </table>
-    </section>
-    """
-
-
-def _dns_section(dns_result: dict) -> str:
-    """Sección de análisis DNS: registros, SPF y DMARC."""
-
-    error = dns_result.get("error")
-
-    # Si hubo error mostramos un aviso en lugar del contenido
-    if error:
-        return f"""
-        <section style="padding: 0.5rem 3rem 1rem;">
-            {_section_title("DNS y correo")}
-            <div style="
-                background: {COLOR['red_bg']};
-                border: 1px solid {COLOR['red']};
-                border-radius: 4px;
-                padding: 1rem 1.2rem;
-                color: {COLOR['red']};
-                font-size: 0.85rem;
-            ">⚠ {error}</div>
-        </section>
-        """
-
-    spf_found    = dns_result.get("spf_found",    False)
-    dmarc_found  = dns_result.get("dmarc_found",  False)
-    dmarc_record = dns_result.get("dmarc_record", None)
-
-    # ── Tabla de estado SPF / DMARC ───────────────────────────────────────────
-    spf_pill   = _pill("Sí", COLOR['green'], COLOR['green_bg']) if spf_found   else _pill("No", COLOR['red'], COLOR['red_bg'])
-    dmarc_pill = _pill("Sí", COLOR['green'], COLOR['green_bg']) if dmarc_found else _pill("No", COLOR['red'], COLOR['red_bg'])
-
-    estado_tabla = f"""
-    <table style="
-        width: 100%;
-        border-collapse: collapse;
-        background: {COLOR['card']};
-        border: 1px solid {COLOR['border']};
-        border-radius: 6px;
-        overflow: hidden;
-        margin-bottom: 1rem;
-    ">
-        <tr>
-            <td style="padding:0.7rem 1rem; color:{COLOR['muted']}; font-family:monospace;
-                       font-size:0.82rem; border-bottom:1px solid {COLOR['border']};">SPF detectado</td>
-            <td style="padding:0.7rem 1rem; border-bottom:1px solid {COLOR['border']};">{spf_pill}</td>
-        </tr>
-        <tr>
-            <td style="padding:0.7rem 1rem; color:{COLOR['muted']}; font-family:monospace;
-                       font-size:0.82rem;">DMARC detectado</td>
-            <td style="padding:0.7rem 1rem;">{dmarc_pill}</td>
-        </tr>
-    </table>
-    """
-
-    # ── Grupos de registros DNS ────────────────────────────────────────────────
-    grupos = [
-        ("Registros A",    "a_records"),
-        ("Registros AAAA", "aaaa_records"),
-        ("Registros MX",   "mx_records"),
-        ("Registros NS",   "ns_records"),
-    ]
-
-    registros_html = ""
-    for titulo, clave in grupos:
-        valores = dns_result.get(clave, [])
-        registros_html += _dns_record_block(titulo, valores)
-
-    # ── Registro DMARC completo (si existe) ───────────────────────────────────
-    dmarc_block = ""
-    if dmarc_record:
-        dmarc_block = f"""
-        <div style="margin-bottom: 0.8rem;">
-            <div style="
-                color: {COLOR['muted']};
-                font-size: 0.7rem;
-                letter-spacing: 1px;
-                margin-bottom: 0.3rem;
-                font-family: monospace;
-            ">REGISTRO DMARC</div>
-            <div style="
-                background: {COLOR['card']};
-                border: 1px solid {COLOR['border']};
-                border-left: 3px solid {COLOR['green']};
-                border-radius: 0 4px 4px 0;
-                padding: 0.6rem 1rem;
-                font-family: monospace;
-                font-size: 0.78rem;
-                color: {COLOR['green']};
-                word-break: break-all;
-            ">{dmarc_record}</div>
-        </div>
-        """
-
-    # ── Avisos si faltan SPF o DMARC ──────────────────────────────────────────
-    avisos_html = ""
-    if not spf_found:
-        avisos_html += f"""
-        <div style="
-            margin-bottom: 0.6rem;
-            padding: 0.8rem 1rem;
-            background: {COLOR['yellow_bg']};
-            border-left: 3px solid {COLOR['yellow']};
-            border-radius: 0 4px 4px 0;
-            color: {COLOR['text']};
-            font-size: 0.84rem;
-            line-height: 1.6;
-        ">⚠ No se detectó registro SPF. Sin SPF, otros servidores pueden enviar correo
-        suplantando tu dominio. Añade un registro TXT con tu política SPF.</div>
-        """
-    if not dmarc_found:
-        avisos_html += f"""
-        <div style="
-            margin-bottom: 0.6rem;
-            padding: 0.8rem 1rem;
-            background: {COLOR['yellow_bg']};
-            border-left: 3px solid {COLOR['yellow']};
-            border-radius: 0 4px 4px 0;
-            color: {COLOR['text']};
-            font-size: 0.84rem;
-            line-height: 1.6;
-        ">⚠ No se detectó registro DMARC. Sin DMARC no puedes controlar qué ocurre
-        con los correos que no superan la validación SPF o DKIM.</div>
-        """
-
-    return f"""
-    <section style="padding: 0.5rem 3rem 1rem;">
-        {_section_title("DNS y correo")}
-        {estado_tabla}
-        {registros_html}
-        {dmarc_block}
-        {avisos_html}
-    </section>
-    """
-
-
-def _dns_record_block(titulo: str, valores: list) -> str:
-    """
-    Renderiza un bloque compacto con el título del tipo de registro
-    y sus valores en píldoras, o un guión si no hay ninguno.
-
-    Args:
-        titulo:  Nombre del tipo de registro (ej. 'Registros A').
-        valores: Lista de strings con los valores del registro.
-
-    Returns:
-        HTML del bloque.
-    """
-    if valores:
-        # Cada valor va en su propia píldora
-        pills_html = " ".join([
-            f'<span style="'
-            f'display:inline-block; margin:2px 4px 2px 0;'
-            f'background:{COLOR["card"]}; color:{COLOR["text"]}; '
-            f'border:1px solid {COLOR["border"]}; '
-            f'font-family:monospace; font-size:0.75rem; '
-            f'padding:2px 10px; border-radius:4px; word-break:break-all;'
-            f'">{v}</span>'
-            for v in valores
-        ])
-    else:
-        pills_html = f'<span style="color:{COLOR["muted"]}; font-size:0.8rem;">—</span>'
-
-    return f"""
-    <div style="margin-bottom: 0.8rem;">
-        <div style="
-            color: {COLOR['muted']};
-            font-size: 0.7rem;
-            letter-spacing: 1px;
-            margin-bottom: 0.4rem;
-            font-family: monospace;
-        ">{titulo.upper()}</div>
-        <div>{pills_html}</div>
-    </div>
-    """
-
-
-def _recommendations_section(headers_result: dict) -> str:
-    """Lista de recomendaciones de seguridad."""
-
-    recommendations = headers_result.get("recommendations", [])
-
-    if not recommendations:
-        return f"""
-        <section style="padding: 0.5rem 3rem 1rem;">
-            {_section_title("Recomendaciones")}
-            <div style="
-                background: {COLOR['green_bg']};
-                border: 1px solid {COLOR['green']};
-                border-radius: 4px;
-                padding: 1rem 1.2rem;
-                color: {COLOR['green']};
-                font-size: 0.85rem;
-            ">✅ Sin recomendaciones pendientes. Configuración excelente.</div>
-        </section>
-        """
-
-    items_html = "".join([
-        f"""
-        <li style="
-            margin-bottom: 0.7rem;
-            padding: 0.8rem 1rem;
-            background: {COLOR['yellow_bg']};
-            border-left: 3px solid {COLOR['yellow']};
-            border-radius: 0 4px 4px 0;
-            color: {COLOR['text']};
-            font-size: 0.84rem;
-            line-height: 1.6;
-        ">⚠ {rec}</li>
-        """
-        for rec in recommendations
-    ])
-
-    return f"""
-    <section style="padding: 0.5rem 3rem 1rem;">
-        {_section_title("Recomendaciones")}
-        <ul style="list-style: none; padding: 0; margin: 0;">
-            {items_html}
-        </ul>
-    </section>
-    """
-
-
-def _footer(timestamp: str) -> str:
-    """Pie del informe con aviso legal y fecha."""
-    return f"""
-    <footer style="
-        margin-top: 2rem;
-        padding: 1.5rem 3rem;
-        border-top: 1px solid {COLOR['border']};
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    ">
-        <div style="color: {COLOR['muted']}; font-size: 0.72rem; font-family: monospace;">
-            CyberScope AI · Solo para uso ético y autorizado
-        </div>
-        <div style="color: {COLOR['muted']}; font-size: 0.72rem;">
-            Generado el {timestamp}
-        </div>
-    </footer>
-    """
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# HELPERS INTERNOS
-# ══════════════════════════════════════════════════════════════════════════════
-
-def _styles() -> str:
-    """Estilos globales del documento (reset básico y tipografía)."""
-    return f"""
-    <style>
-        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-        body {{
-            background-color: {COLOR['bg']};
-            color: {COLOR['text']};
-            font-family: 'Segoe UI', Arial, sans-serif;
-            font-size: 15px;
-            line-height: 1.5;
-        }}
-        table {{ border-spacing: 0; }}
-    </style>
-    """
-
-
-def _section_title(title: str) -> str:
-    """Título de sección con estilo monospace y letra espaciada."""
-    return f"""
-    <div style="
-        font-family: monospace;
-        font-size: 0.65rem;
-        letter-spacing: 3px;
-        color: {COLOR['muted']};
-        text-transform: uppercase;
-        margin: 0 0 0.8rem 0;
-        padding-top: 0.5rem;
-    ">◈ {title}</div>
-    """
-
-
-def _pill(text: str, color: str, bg: str) -> str:
-    """Devuelve un span con forma de píldora para estados y badges."""
-    return (
-        f'<span style="'
-        f'background:{bg}; color:{color}; border:1px solid {color}; '
-        f'font-family:monospace; font-size:0.7rem; font-weight:bold; '
-        f'letter-spacing:1px; padding:2px 10px; border-radius:20px; '
-        f'white-space:nowrap;">{text}</span>'
+def _breakdown_section(score) -> str:
+    labels = {"https": "HTTPS y redirección", "headers": "Cabeceras de seguridad",
+              "tls": "Certificado TLS", "email": "Correo (SPF/DMARC)"}
+    rows = "".join(
+        f"<tr><td>{labels[k]}</td><td>{round(score['breakdown'][k], 1)} / {score['max_points'][k]}</td></tr>"
+        for k in labels
     )
+    rows += f"<tr><td>Penalización por exposición</td><td>{score['breakdown']['exposure_penalty']}</td></tr>"
+    return _section("Desglose de la puntuación", f"<table>{rows}</table>")
 
 
-def _risk_colors(risk: str) -> tuple[str, str]:
-    """
-    Devuelve (color_texto, color_fondo) según el nivel de riesgo.
+def _recommendations_section(recs) -> str:
+    if not recs:
+        return _section("Recomendaciones", "<p>✅ No hay recomendaciones pendientes.</p>")
+    items = "".join(
+        f'<li><span class="sev" style="background:{SEVERITY_COLORS[r["severity"]]}">{esc(r["severity"])}</span> '
+        f'<strong>{esc(r["area"])}:</strong> {esc(r["text"])}</li>'
+        for r in recs
+    )
+    return _section("Recomendaciones priorizadas", f"<ol class='recs'>{items}</ol>")
 
-    Args:
-        risk: 'Bajo', 'Medio' o 'Alto'.
 
-    Returns:
-        Tupla (color_hex, color_rgba).
-    """
-    table = {
-        "Bajo":  (COLOR["green"],  COLOR["green_bg"]),
-        "Medio": (COLOR["yellow"], COLOR["yellow_bg"]),
-        "Alto":  (COLOR["red"],    COLOR["red_bg"]),
-    }
-    return table.get(risk, (COLOR["text"], COLOR["card"]))
+def _connectivity_section(scan) -> str:
+    rows = [
+        ("Estado HTTP", scan.get("http_status") or "N/A"),
+        ("Estado HTTPS", scan.get("https_status") or "N/A"),
+        ("HTTPS activo", _yes_no(scan.get("uses_https"))),
+        ("Redirige HTTP → HTTPS", _yes_no(scan.get("redirects_to_https"))),
+        ("Tecnologías detectadas", ", ".join(scan.get("technologies", [])) or "—"),
+    ]
+    body = _kv_table(rows)
+    if scan.get("error"):
+        body = f"<p class='err'>{esc(scan['error'])}</p>" + body
+    return _section("Conectividad y tecnologías", body)
+
+
+def _headers_section(headers) -> str:
+    rows = "".join(
+        f"<tr><td><code>{esc(name)}</code></td><td>{_pill(bool(value))}</td><td>{esc(truncate(value, 150)) if value else '—'}</td></tr>"
+        for name, value in headers.get("headers_found", {}).items()
+    )
+    err = f"<p class='err'>{esc(headers['error'])}</p>" if headers.get("error") else ""
+    return _section("Cabeceras de seguridad", f"{err}<table><tr><th>Cabecera</th><th>Estado</th><th>Valor</th></tr>{rows}</table>")
+
+
+def _tls_section(tls) -> str:
+    if tls.get("error"):
+        return _section("Certificado TLS", f"<p class='err'>{esc(tls['error'])}</p>")
+    rows = [
+        ("Emisor", tls.get("issuer")), ("Sujeto", tls.get("subject")),
+        ("Válido desde", tls.get("not_before")), ("Válido hasta", tls.get("not_after")),
+        ("Días restantes", tls.get("days_left")), ("Versión TLS", tls.get("tls_version")),
+        ("Cifrado", tls.get("cipher")), ("Nombres (SAN)", ", ".join(tls.get("san", [])[:15])),
+    ]
+    return _section("Certificado TLS", _kv_table(rows))
+
+
+def _dns_section(dns) -> str:
+    if dns.get("error"):
+        return _section("DNS y correo", f"<p class='err'>{esc(dns['error'])}</p>")
+    rows = [
+        ("A", ", ".join(dns.get("a_records", [])) or "—"),
+        ("AAAA", ", ".join(dns.get("aaaa_records", [])) or "—"),
+        ("MX", ", ".join(dns.get("mx_records", [])) or "—"),
+        ("NS", ", ".join(dns.get("ns_records", [])) or "—"),
+        ("SPF", truncate(dns.get("spf_record"), 200) if dns.get("spf_found") else "No encontrado"),
+        ("DMARC", truncate(dns.get("dmarc_record"), 200) if dns.get("dmarc_found") else "No encontrado"),
+    ]
+    return _section("DNS y correo", _kv_table(rows))
+
+
+def _exposure_section(exp) -> str:
+    if exp.get("error"):
+        return _section("Servicios expuestos", f"<p class='err'>{esc(exp['error'])}</p>")
+    rows = [
+        ("Puertos observados", ", ".join(str(p) for p in exp.get("open_ports", [])) or "Ninguno registrado"),
+        ("Puertos de riesgo", ", ".join(f"{r['port']} ({r['service']})" for r in exp.get("risky_ports", [])) or "Ninguno"),
+        ("CVE asociadas", ", ".join(exp.get("vulns", [])[:30]) or "Ninguna"),
+    ]
+    return _section("Servicios expuestos", f"<p class='note'>Fuente: {esc(exp.get('source'))}</p>" + _kv_table(rows))
+
+
+def _subdomains_section(sub) -> str:
+    if sub.get("error"):
+        return _section("Subdominios públicos", f"<p class='err'>{esc(sub['error'])}</p>")
+    names = sub.get("subdomains", [])
+    extra = f" (se muestran {len(names)})" if sub.get("truncated") else ""
+    body = f"<p class='note'>{sub.get('total', 0)} encontrados en {esc(sub.get('source'))}{extra}.</p>"
+    if names:
+        body += "<ul class='cols'>" + "".join(f"<li>{esc(n)}</li>" for n in names) + "</ul>"
+    return _section("Subdominios públicos", body)
+
+
+# ── Helpers HTML ───────────────────────────────────────────────────────────────
+
+def _section(title: str, body: str) -> str:
+    return f"<section><h2>{esc(title)}</h2>{body}</section>"
+
+
+def _kv_table(rows) -> str:
+    return "<table>" + "".join(f"<tr><th>{esc(k)}</th><td>{esc(v)}</td></tr>" for k, v in rows) + "</table>"
+
+
+def _pill(ok: bool) -> str:
+    return '<span class="ok">Presente</span>' if ok else '<span class="ko">Ausente</span>'
+
+
+def _yes_no(value) -> str:
+    return "Sí" if value else "No"
+
+
+def _markdown_to_html(text: str) -> str:
+    """Conversión mínima y SEGURA de Markdown (se escapa primero, luego se formatea)."""
+    import re
+    out, in_list = [], False
+    for raw in (text or "").splitlines():
+        line = esc(raw.strip())
+        line = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", line)
+        is_item = re.match(r"^(?:[-*]|\d+\.)\s+(.*)", line)
+        if is_item:
+            if not in_list:
+                out.append("<ul>")
+                in_list = True
+            out.append(f"<li>{is_item.group(1)}</li>")
+            continue
+        if in_list:
+            out.append("</ul>")
+            in_list = False
+        if line.startswith("#"):
+            out.append(f"<h3>{line.lstrip('#').strip()}</h3>")
+        elif line:
+            out.append(f"<p>{line}</p>")
+    if in_list:
+        out.append("</ul>")
+    return "".join(out)
+
+
+_STYLES = """
+body{font-family:Segoe UI,Arial,sans-serif;max-width:920px;margin:0 auto;padding:24px;color:#1f2933;background:#fff;line-height:1.5}
+header{border-bottom:3px solid #00b386;margin-bottom:16px}.brand{font-weight:700;color:#00b386}
+h1{margin:4px 0}h2{font-size:1.1rem;border-left:4px solid #00b386;padding-left:8px;margin-top:28px}
+.meta,.note{color:#5f6b7a;font-size:.9rem}.err{color:#d93025}
+table{width:100%;border-collapse:collapse;font-size:.9rem}th,td{border-bottom:1px solid #e4e7eb;padding:6px 8px;text-align:left;vertical-align:top;word-break:break-word}
+th{width:28%;color:#3e4c59}.score{display:flex;align-items:center;gap:20px;border:2px solid;border-radius:8px;padding:16px}
+.num{font-size:3rem;font-weight:700}.num small{font-size:1.2rem;color:#9aa5b1}.risk{color:#fff;padding:4px 12px;border-radius:4px;font-weight:700}
+.ai{background:#f5f7fa;border-radius:8px;padding:12px 16px;margin-top:12px}.tag{font-size:.75rem;color:#5f6b7a;text-transform:uppercase}
+.sev{color:#fff;font-size:.75rem;padding:1px 8px;border-radius:10px}.recs li{margin-bottom:6px}
+.ok{color:#0f9d58;font-weight:600}.ko{color:#d93025;font-weight:600}.cols{columns:2;font-size:.85rem}
+footer{margin-top:32px;font-size:.8rem;color:#9aa5b1;border-top:1px solid #e4e7eb;padding-top:8px}
+@media print{body{padding:0}section{break-inside:avoid}}
+"""
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MARKDOWN
+# ══════════════════════════════════════════════════════════════════════════════
+
+def generate_markdown_report(analysis: dict, ai_summary: dict | None = None) -> str:
+    """Informe en Markdown, útil para pegarlo en un ticket o en documentación."""
+    a, s = analysis, analysis["score"]
+
+    def md(value) -> str:
+        # Evita que valores externos rompan la tabla o inyecten enlaces/HTML
+        return esc(str(value if value is not None else "—")).replace("|", "\\|").replace("\n", " ")
+
+    lines = [
+        f"# Informe CyberScope AI — {md(a['domain'])}",
+        "",
+        f"- **Fecha (UTC):** {md(a['timestamp'])}",
+        f"- **Puntuación:** {s['global_score']}/100 — riesgo **{s['risk_level']}**",
+        f"- **IPs:** {md(', '.join(a.get('ips', [])))}",
+        "",
+        md(s.get("summary")),
+        "",
+    ]
+    if ai_summary:
+        origen = "IA (" + str(ai_summary.get("model")) + ")" if ai_summary.get("source") == "claude" else "reglas (sin IA)"
+        lines += [f"## Resumen ejecutivo — generado por {origen}", "", ai_summary.get("text", ""), ""]
+
+    lines += ["## Recomendaciones", ""]
+    lines += [f"{i}. **[{r['severity']}] {r['area']}:** {md(r['text'])}" for i, r in enumerate(s["recommendations"], 1)] \
+        or ["Sin recomendaciones pendientes."]
+
+    lines += ["", "## Cabeceras de seguridad", "", "| Cabecera | Estado |", "|---|---|"]
+    lines += [f"| {h} | {'Presente' if v else 'Ausente'} |" for h, v in a["headers"]["headers_found"].items()]
+
+    tls, dns, exp = a["tls"], a["dns"], a["exposure"]
+    lines += [
+        "", "## Certificado TLS", "",
+        md(tls["error"]) if tls.get("error") else
+        f"Emisor: {md(tls.get('issuer'))} · caduca: {md(tls.get('not_after'))} ({md(tls.get('days_left'))} días) · {md(tls.get('tls_version'))}",
+        "", "## Correo", "",
+        f"SPF: {'sí (' + md(dns.get('spf_all')) + ')' if dns.get('spf_found') else 'no'} · "
+        f"DMARC: {'sí (p=' + md(dns.get('dmarc_policy')) + ')' if dns.get('dmarc_found') else 'no'}",
+        "", "## Servicios expuestos (Shodan InternetDB)", "",
+        md(exp["error"]) if exp.get("error") else f"Puertos: {md(', '.join(map(str, exp.get('open_ports', []))) or 'ninguno')}",
+        "", "## Subdominios", "",
+        md(a["subdomains"]["error"]) if a["subdomains"].get("error") else f"{a['subdomains'].get('total', 0)} encontrados en crt.sh.",
+        "",
+    ]
+    return "\n".join(lines)
