@@ -1,5 +1,5 @@
 # Dependencias de ejecución (versiones fijadas y revisadas con pip-audit)
-streamlit==1.66.0
+streamlit==1.66.1
 requests==2.34.2
 dnspython==2.9.0
 pandas==3.0.6
